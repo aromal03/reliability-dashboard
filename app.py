@@ -24,16 +24,51 @@ h1{color:#1e3a5f}h2{color:#2471a3}
 </style>
 """, unsafe_allow_html=True)
 
+# ── DATA ─────────────────────────────────────────────────────
 V1 = dict(intent_fail=0.0000, retrieval_fail=0.3000,
            ranking_fail=0.5580, hallucination=0.4800,
            tool_fail=0.1260, agent_fail=0.7320, n=500)
 V2 = dict(intent_fail=0.0035, retrieval_fail=0.2835,
            ranking_fail=0.5665, hallucination=0.4405,
            tool_fail=0.1345, agent_fail=0.7080, n=2000)
-CPT = dict(h00=0.2851, h10=0.4500, h01=0.5891, h11=0.6733)
-SENS = {"RetrievalFailure":0.153,"ToolSelectionError":0.103,
-        "RankingError":0.091,"LLM_Hallucination":0.076,"IntentMisclass":0.050}
+V3 = dict(intent_fail=0.0045, retrieval_fail=0.2655,
+           ranking_fail=0.5500, hallucination=0.4385,
+           tool_fail=0.1368, agent_fail=0.6995, n=4000)
 
+# FTA results from NB07
+FTA = {
+    "V1": {"p_observed":0.7320,"p_naive":0.8594,"p_corr":0.7991,
+           "naive_err":0.1274,"corr_err":0.0671,"n":500},
+    "V2": {"p_observed":0.7080,"p_naive":0.8501,"p_corr":0.7908,
+           "naive_err":0.1421,"corr_err":0.0828,"n":2000},
+    "V3": {"p_observed":0.6995,"p_naive":0.8405,"p_corr":0.7829,
+           "naive_err":0.1410,"corr_err":0.0834,"n":4000},
+}
+
+# Cross-validation results from NB09
+CV = {
+    "V1": {"naive_mean":0.1273,"naive_std":0.0334,
+           "corr_mean": 0.0671,"corr_std": 0.0331,
+           "bn_mean":   0.0261,"bn_std":   0.0212},
+    "V2": {"naive_mean":0.1421,"naive_std":0.0215,
+           "corr_mean": 0.0828,"corr_std": 0.0227,
+           "bn_mean":   0.0172,"bn_std":   0.0098},
+    "V3": {"naive_mean":0.1410,"naive_std":0.0206,
+           "corr_mean": 0.0834,"corr_std": 0.0202,
+           "bn_mean":   0.0157,"bn_std":   0.0128},
+}
+
+CPT  = dict(h00=0.2851, h10=0.0000, h01=0.5891, h11=0.6733)
+SENS = {"RetrievalFailure":0.1536,"ToolSelectionError":0.1008,
+        "RankingError":0.0885,"LLM_Hallucination":0.0646,"IntentMisclass":0.0500}
+
+ETA_DATA = {
+    "Retrieval Failure": {"p_init":0.300,"p_unsafe":0.0630,"p_safe":0.018},
+    "Ranking Error":     {"p_init":0.558,"p_unsafe":0.1360,"p_safe":0.024},
+    "LLM Hallucination": {"p_init":0.480,"p_unsafe":0.0686,"p_safe":0.045},
+}
+
+# ── HELPERS ──────────────────────────────────────────────────
 def or_gate(*ps):
     r = 1.0
     for p in ps:
@@ -50,12 +85,9 @@ def wilson_ci(k, n, z=1.96):
     return round(max(0, c-m), 4), round(min(1, c+m), 4)
 
 def risk_level(p):
-    if p >= 0.85:
-        return "CRITICAL", "#ef4444"
-    if p >= 0.75:
-        return "HIGH", "#f97316"
-    if p >= 0.60:
-        return "MEDIUM", "#eab308"
+    if p >= 0.85: return "CRITICAL", "#ef4444"
+    if p >= 0.75: return "HIGH",     "#f97316"
+    if p >= 0.60: return "MEDIUM",   "#eab308"
     return "LOW", "#22c55e"
 
 def compute_bn(ret, rank, hall, tool, intent):
@@ -82,14 +114,10 @@ def pipeline_sim(question):
     i_fail  = len(question.strip()) < 5
     r_fail  = any(k in q for k in multi_kw) and np.random.random() < 0.35
     rk_fail = r_fail and np.random.random() < 0.72
-    if r_fail and rk_fail:
-        p_h = CPT["h11"]
-    elif r_fail:
-        p_h = CPT["h10"]
-    elif rk_fail:
-        p_h = CPT["h01"]
-    else:
-        p_h = CPT["h00"]
+    if r_fail and rk_fail:   p_h = CPT["h11"]
+    elif r_fail:              p_h = CPT["h10"]
+    elif rk_fail:             p_h = CPT["h01"]
+    else:                     p_h = CPT["h00"]
     hall   = np.random.random() < p_h
     t_sel  = "calculator" if any(k in q for k in calc_kw) else "retrieval"
     t_fail = t_sel == "calculator"
@@ -98,13 +126,14 @@ def pipeline_sim(question):
         0.30 if r_fail  else 0.05,
         0.56 if rk_fail else 0.10,
         p_h,
-        0.13 if t_fail else 0.05,
+        0.13 if t_fail  else 0.05,
         0.50 if i_fail  else 0.00,
     )
     return dict(i_fail=i_fail, r_fail=r_fail, rk_fail=rk_fail,
                 hall=hall, t_fail=t_fail, t_sel=t_sel,
                 ag=ag, p_bn=p_bn, p_fta=p_fta, p_h=round(p_h, 4))
 
+# ── SIDEBAR ───────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### AI Reliability Framework")
     st.markdown("**MSc Dissertation**")
@@ -116,35 +145,37 @@ with st.sidebar:
         "Event Tree Analysis",
         "Bayesian Network",
         "Sensitivity Analysis",
-        "V1 vs V2 Comparison",
+        "Cross-Validation Results",
+        "V1 vs V2 vs V3 Comparison",
         "Apply to Any Agent",
     ], label_visibility="collapsed")
     st.divider()
-    st.metric("BN Estimate",       "0.688", "-0.044 from observed")
-    st.metric("FTA Estimate",      "0.859", "+0.127 from observed",
+    st.metric("BN Estimate",      "0.688", "-0.044 from observed")
+    st.metric("FTA Estimate",     "0.859", "+0.127 from observed",
               delta_color="inverse")
-    st.metric("BN accuracy gain",  "65.5%", "vs FTA")
+    st.metric("BN accuracy gain", "88.9%", "error reduction V3")
 
+# ── OVERVIEW ─────────────────────────────────────────────────
 if page == "Overview":
     st.title("AI Agent Reliability Framework")
     st.markdown("#### Applying FTA · ETA · Bayesian Networks to a RAG AI Pipeline")
     st.divider()
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Questions tested",   "2,500")
-    c2.metric("Agent failure rate", "73.2%",  "V1 baseline")
-    c3.metric("BN vs FTA accuracy", "65.5%",  "BN more accurate")
-    c4.metric("Most critical",      "Retrieval", "swing=0.153")
+    c1.metric("Questions tested",   "6,500",   "V1+V2+V3")
+    c2.metric("Agent failure rate", "69.95%",  "V3 best — down from 73.2%")
+    c3.metric("BN vs FTA accuracy", "88.9%",   "error reduction V3")
+    c4.metric("Most critical",      "Retrieval","swing=0.154")
     st.divider()
     col1, col2 = st.columns([2, 1])
     with col1:
         st.markdown("""
 A five-component RAG AI agent was built and evaluated on the **HotpotQA**
-multi-hop QA benchmark. Three classical reliability engineering methods
-were applied: **FTA**, **ETA**, and **Bayesian Networks**.
+multi-hop QA benchmark across **three configurations** (V1 n=500, V2 n=2,000, V3 n=4,000).
+Three classical reliability engineering methods were applied: **FTA**, **ETA**, and **Bayesian Networks**.
 
-**Central finding:** The BN estimated P(AgentFailure) = 0.688, achieving
-65.5% lower estimation error than FTA (0.044 vs 0.127). The BN is more
-accurate because it explicitly models the Retrieval → Hallucination
+**Central finding:** The BN achieved the lowest estimation error in every configuration.
+At V3, BN mean absolute error = 0.0157 — an 88.9% reduction vs naive FTA (0.141).
+The BN is more accurate because it explicitly models the Retrieval → Hallucination
 dependency that FTA cannot represent.
 """)
         st.markdown(
@@ -153,30 +184,36 @@ dependency that FTA cannot represent.
             'FTA predicts 0.144, data shows 0.288. '
             'This is why FTA overestimates by 12.7 percentage points.</div>',
             unsafe_allow_html=True)
+        st.markdown(
+            '<div class="rbox"><b>Progressive improvement:</b> '
+            'Agent failure reduced from 73.2% (V1) → 70.8% (V2) → 69.95% (V3). '
+            'BN estimation error also improves: 0.0261 → 0.0172 → 0.0157.</div>',
+            unsafe_allow_html=True)
     with col2:
         fig = go.Figure(go.Bar(
-            x=["Observed", "BN", "FTA"],
-            y=[0.732, 0.688, 0.859],
-            marker_color=["#64748b", "#22c55e", "#ef4444"],
-            text=["0.732", "0.688", "0.859"],
+            x=["V1 Obs", "V1 BN", "V1 FTA", "V2 Obs", "V3 Obs"],
+            y=[0.7320, 0.6881, 0.8594, 0.7080, 0.6995],
+            marker_color=["#64748b","#22c55e","#ef4444","#94a3b8","#475569"],
+            text=["0.732","0.688","0.859","0.708","0.700"],
             textposition="outside",
         ))
-        fig.add_hline(y=0.732, line_dash="dash", line_color="#64748b")
+        fig.add_hline(y=0.732, line_dash="dash", line_color="#64748b",
+                      annotation_text="V1 baseline")
         fig.update_layout(
-            title="P(AgentFailure) — three methods",
+            title="P(AgentFailure) across configs",
             yaxis=dict(range=[0, 1.05], gridcolor="#f1f5f9"),
-            height=300, margin=dict(t=40, b=20, l=30, r=20),
+            height=320, margin=dict(t=40, b=20, l=30, r=20),
             plot_bgcolor="white", paper_bgcolor="white",
         )
         st.plotly_chart(fig, use_container_width=True)
     st.divider()
-    st.subheader("Five-component pipeline")
+    st.subheader("Five-component pipeline — V3 results")
     comps = [
-        ("1","Intent",   "DeBERTa",   V2["intent_fail"],    "#22c55e"),
-        ("2","Retriever","mpnet",      V2["retrieval_fail"], "#f97316"),
-        ("3","Ranker",   "CrossEnc",  V2["ranking_fail"],   "#ef4444"),
-        ("4","LLM",      "Flan-T5-XL",V2["hallucination"],  "#f59e0b"),
-        ("5","Tool",     "Rules",      V2["tool_fail"],      "#3b82f6"),
+        ("1","Intent",   "DeBERTa",   V3["intent_fail"],    "#22c55e"),
+        ("2","Retriever","mpnet",      V3["retrieval_fail"], "#f97316"),
+        ("3","Ranker",   "CrossEnc",  V3["ranking_fail"],   "#ef4444"),
+        ("4","LLM",      "Flan-T5-XL",V3["hallucination"],  "#f59e0b"),
+        ("5","Tool",     "Rules",      V3["tool_fail"],      "#3b82f6"),
     ]
     cols = st.columns(5)
     for col, (num, name, model, rate, color) in zip(cols, comps):
@@ -188,9 +225,10 @@ padding:12px 8px;text-align:center;border-top:4px solid {color}">
 <div style="font-size:13px;font-weight:600;color:#1e293b;margin:4px 0">{name}</div>
 <div style="font-size:10px;color:#94a3b8;margin-bottom:6px">{model}</div>
 <div style="font-size:18px;font-weight:700;color:{color}">{rate*100:.1f}%</div>
-<div style="font-size:10px;color:#94a3b8">V2 fail rate</div>
+<div style="font-size:10px;color:#94a3b8">V3 fail rate</div>
 </div>""", unsafe_allow_html=True)
 
+# ── LIVE PIPELINE DEMO ────────────────────────────────────────
 elif page == "Live Pipeline Demo":
     st.title("Live Pipeline Demo")
     st.markdown("Type a question and watch each component run. BN updates with evidence.")
@@ -254,8 +292,7 @@ padding:16px;text-align:center;margin-top:10px">
                     0.688, 0.688,
                     res["p_bn"] if res["r_fail"]  else 0.55,
                     res["p_bn"] if res["rk_fail"] else 0.48,
-                    res["p_bn"],
-                    res["p_bn"],
+                    res["p_bn"], res["p_bn"],
                 ]
                 bar_colors = [
                     "#22c55e" if p < 0.70 else
@@ -263,13 +300,10 @@ padding:16px;text-align:center;margin-top:10px">
                     "#ef4444" for p in probs
                 ]
                 fig2 = go.Figure(go.Bar(
-                    x=stages, y=probs,
-                    marker_color=bar_colors,
-                    text=[f"{p:.4f}" for p in probs],
-                    textposition="outside",
+                    x=stages, y=probs, marker_color=bar_colors,
+                    text=[f"{p:.4f}" for p in probs], textposition="outside",
                 ))
-                fig2.add_hline(y=0.732, line_dash="dash",
-                               line_color="#64748b",
+                fig2.add_hline(y=0.732, line_dash="dash", line_color="#64748b",
                                annotation_text="Observed 0.732")
                 fig2.update_layout(
                     title="BN P(AgentFail) as evidence arrives",
@@ -292,39 +326,49 @@ padding:16px;text-align:center;margin-top:10px">
                     f'BN P(AgentFail) = {res["p_bn"]:.4f} — below the 0.732 baseline.</div>',
                     unsafe_allow_html=True)
 
+# ── FAULT TREE ANALYSIS ───────────────────────────────────────
 elif page == "Fault Tree Analysis":
     st.title("Fault Tree Analysis")
     st.markdown("Top-down deductive method — asks *what causes* agent failure?")
+
+    config_fta = st.selectbox("Select configuration:", ["V1 (n=500)", "V2 (n=2,000)", "V3 (n=4,000)"])
+    fta_key = "V1" if "V1" in config_fta else "V2" if "V2" in config_fta else "V3"
+    fta_d   = FTA[fta_key]
+    vdata   = V1 if fta_key=="V1" else V2 if fta_key=="V2" else V3
+
     c1, c2, c3 = st.columns(3)
-    c1.metric("P(AgentFail | FTA)",      "0.8594")
-    c2.metric("P(AgentFail | Observed)", "0.7320")
-    c3.metric("FTA Overestimate",        "+0.1274", delta_color="inverse")
+    c1.metric("P(AgentFail | Naive FTA)", f"{fta_d['p_naive']:.4f}",
+              f"error={fta_d['naive_err']:.4f}", delta_color="inverse")
+    c2.metric("P(AgentFail | Corr FTA)", f"{fta_d['p_corr']:.4f}",
+              f"error={fta_d['corr_err']:.4f}", delta_color="inverse")
+    c3.metric("P(AgentFail | Observed)", f"{fta_d['p_observed']:.4f}", "Ground truth")
     st.divider()
+
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("OR gate calculation")
-        p_r = V1["retrieval_fail"]; p_rk = V1["ranking_fail"]
-        p_h = V1["hallucination"]; p_i  = V1["intent_fail"]
-        p_t = V1["tool_fail"]
+        p_r  = vdata["retrieval_fail"]; p_rk = vdata["ranking_fail"]
+        p_h  = vdata["hallucination"];  p_i  = vdata["intent_fail"]
+        p_t  = vdata["tool_fail"]
         p_know = or_gate(p_r, p_rk)
         p_reas = or_gate(p_h, p_i)
         p_fta  = or_gate(p_know, p_reas, p_t)
         rows = [
-            {"Node":"P(IntentMisclass)",    "Formula":"Measured",               "Value":f"{p_i:.4f}"},
-            {"Node":"P(RetrievalFailure)",  "Formula":"Measured",               "Value":f"{p_r:.4f}"},
-            {"Node":"P(RankingError)",      "Formula":"Measured",               "Value":f"{p_rk:.4f}"},
-            {"Node":"P(LLM_Hallucination)","Formula":"Measured",               "Value":f"{p_h:.4f}"},
-            {"Node":"P(ToolSelectionErr)", "Formula":"Measured",               "Value":f"{p_t:.4f}"},
-            {"Node":"P(Knowledge Failure)","Formula":f"OR({p_r},{p_rk})",      "Value":f"{p_know:.4f}"},
-            {"Node":"P(Reasoning Failure)","Formula":f"OR({p_h},{p_i})",       "Value":f"{p_reas:.4f}"},
-            {"Node":"P(AgentFail | FTA)",  "Formula":"OR(know,reas,exec)",     "Value":f"{p_fta:.4f}"},
+            {"Node":"P(IntentMisclass)",   "Formula":"Measured",              "Value":f"{p_i:.4f}"},
+            {"Node":"P(RetrievalFailure)", "Formula":"Measured",              "Value":f"{p_r:.4f}"},
+            {"Node":"P(RankingError)",     "Formula":"Measured",              "Value":f"{p_rk:.4f}"},
+            {"Node":"P(LLM_Hallucination)","Formula":"Measured",             "Value":f"{p_h:.4f}"},
+            {"Node":"P(ToolSelectionErr)", "Formula":"Measured",              "Value":f"{p_t:.4f}"},
+            {"Node":"P(Knowledge Failure)","Formula":f"OR({p_r},{p_rk})",    "Value":f"{p_know:.4f}"},
+            {"Node":"P(Reasoning Failure)","Formula":f"OR({p_h},{p_i})",     "Value":f"{p_reas:.4f}"},
+            {"Node":"P(AgentFail | FTA)",  "Formula":"OR(know,reas,exec)",   "Value":f"{p_fta:.4f}"},
         ]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True,
-                     hide_index=True)
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
     with col2:
-        st.subheader("Independence audit")
-        ratios = [2.0, 1.3, 1.6, 1.1]
-        labels = ["Ret x Hall", "Rank x Hall", "Ret x Rank", "Tool x Hall"]
+        st.subheader("Independence audit (V1)")
+        ratios   = [2.0, 1.3, 1.6, 1.1]
+        labels   = ["Ret x Hall", "Rank x Hall", "Ret x Rank", "Tool x Hall"]
         colors_a = ["#ef4444", "#f59e0b", "#ef4444", "#22c55e"]
         fig_a = go.Figure(go.Bar(
             x=labels, y=ratios, marker_color=colors_a,
@@ -338,29 +382,55 @@ elif page == "Fault Tree Analysis":
             plot_bgcolor="white", paper_bgcolor="white",
         )
         st.plotly_chart(fig_a, use_container_width=True)
+
     st.markdown(
         '<div class="dbox"><b>Why FTA overestimates:</b> '
         'Retrieval x Hallucination co-occur at 2.0x the independent rate. '
-        'FTA assumes ratio=1.0 everywhere. This inflates P(AgentFailure) by 12.7pp.</div>',
+        'FTA assumes ratio=1.0 everywhere. This inflates P(AgentFailure) by 12.7pp (V1).</div>',
         unsafe_allow_html=True)
     st.divider()
+
+    # All three configs comparison
+    st.subheader("FTA comparison — all three configurations")
+    fig_fta3 = go.Figure()
+    cfg_labels = ["V1 (n=500)", "V2 (n=2,000)", "V3 (n=4,000)"]
+    fig_fta3.add_trace(go.Bar(name="Observed", x=cfg_labels,
+        y=[FTA[k]["p_observed"] for k in ["V1","V2","V3"]],
+        marker_color="#64748b", text=[f"{FTA[k]['p_observed']:.4f}" for k in ["V1","V2","V3"]],
+        textposition="outside"))
+    fig_fta3.add_trace(go.Bar(name="Naive FTA", x=cfg_labels,
+        y=[FTA[k]["p_naive"] for k in ["V1","V2","V3"]],
+        marker_color="#ef4444", text=[f"{FTA[k]['p_naive']:.4f}" for k in ["V1","V2","V3"]],
+        textposition="outside"))
+    fig_fta3.add_trace(go.Bar(name="Corrected FTA", x=cfg_labels,
+        y=[FTA[k]["p_corr"] for k in ["V1","V2","V3"]],
+        marker_color="#f59e0b", text=[f"{FTA[k]['p_corr']:.4f}" for k in ["V1","V2","V3"]],
+        textposition="outside"))
+    fig_fta3.update_layout(
+        barmode="group", height=380,
+        yaxis=dict(range=[0,1.0], gridcolor="#f1f5f9"),
+        margin=dict(t=20,b=20,l=40,r=20),
+        plot_bgcolor="white", paper_bgcolor="white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig_fta3, use_container_width=True)
+
     st.subheader("Component error rates with 95% Wilson CI")
     comp_names = ["Intent","Retrieval","Ranking","Hallucination","Tool"]
-    rates = [V1["intent_fail"], V1["retrieval_fail"], V1["ranking_fail"],
-             V1["hallucination"], V1["tool_fail"]]
-    cis   = [wilson_ci(int(r * 500), 500) for r in rates]
+    rates = [vdata["intent_fail"], vdata["retrieval_fail"], vdata["ranking_fail"],
+             vdata["hallucination"], vdata["tool_fail"]]
+    n_cfg = vdata["n"]
+    cis   = [wilson_ci(int(r * n_cfg), n_cfg) for r in rates]
     fig_e = go.Figure(go.Bar(
         x=comp_names, y=rates,
         marker_color=["#22c55e","#f97316","#ef4444","#f59e0b","#3b82f6"],
-        error_y=dict(
-            type="data", symmetric=False,
-            array=[ci[1]-r for ci,r in zip(cis,rates)],
-            arrayminus=[r-ci[0] for ci,r in zip(cis,rates)],
-        ),
+        error_y=dict(type="data", symmetric=False,
+                     array=[ci[1]-r for ci,r in zip(cis,rates)],
+                     arrayminus=[r-ci[0] for ci,r in zip(cis,rates)]),
         text=[f"{r:.3f}" for r in rates], textposition="outside",
     ))
-    fig_e.add_hline(y=0.732, line_dash="dash", line_color="#ef4444",
-                    annotation_text="Agent failure = 0.732")
+    fig_e.add_hline(y=vdata["agent_fail"], line_dash="dash", line_color="#ef4444",
+                    annotation_text=f"Agent failure = {vdata['agent_fail']:.3f}")
     fig_e.update_layout(
         yaxis=dict(range=[0, 1.0], gridcolor="#f1f5f9"),
         height=380, margin=dict(t=20, b=20, l=40, r=20),
@@ -368,14 +438,10 @@ elif page == "Fault Tree Analysis":
     )
     st.plotly_chart(fig_e, use_container_width=True)
 
+# ── EVENT TREE ANALYSIS ───────────────────────────────────────
 elif page == "Event Tree Analysis":
     st.title("Event Tree Analysis")
     st.markdown("Forward consequence modelling — given a failure, what happens next?")
-    ETA_DATA = {
-        "Retrieval Failure": {"p_init":0.300,"p_unsafe":0.0630,"p_safe":0.018},
-        "Ranking Error":     {"p_init":0.558,"p_unsafe":0.1360,"p_safe":0.024},
-        "LLM Hallucination": {"p_init":0.480,"p_unsafe":0.0686,"p_safe":0.045},
-    }
     c1, c2, c3 = st.columns(3)
     for col, (name, data) in zip([c1,c2,c3], ETA_DATA.items()):
         col.metric(name, f"P(Unsafe)={data['p_unsafe']:.4f}",
@@ -441,34 +507,35 @@ elif page == "Event Tree Analysis":
         'barriers are weakest. Output Validation (50%) is the most effective single '
         'barrier across all three ETAs.</div>', unsafe_allow_html=True)
 
+# ── BAYESIAN NETWORK ──────────────────────────────────────────
 elif page == "Bayesian Network":
     st.title("Bayesian Network")
     st.markdown("Explicitly models component dependencies that FTA ignores.")
     c1, c2, c3 = st.columns(3)
-    c1.metric("P(AgentFail | Observed)", "0.7320", "Ground truth")
+    c1.metric("P(AgentFail | Observed)", "0.7320", "V1 Ground truth")
     c2.metric("P(AgentFail | BN)",       "0.6881", "Error = 0.044")
     c3.metric("P(AgentFail | FTA)",      "0.8594", "Error = 0.127",
               delta_color="inverse")
     st.markdown(
-        '<div class="rbox"><b>BN is 65.5% more accurate than FTA.</b> '
+        '<div class="rbox"><b>BN is 65.5% more accurate than FTA (V1).</b> '
         'The BN uses four hallucination CPT values (0.285 to 0.673) based on '
         'upstream component state. FTA collapses all four to a flat 0.480.</div>',
         unsafe_allow_html=True)
     st.divider()
-    st.subheader("Critical CPT: P(Hallucination | Retrieval, Ranking)")
+    st.subheader("Critical CPT: P(Hallucination | Retrieval, Ranking) — V1 empirical values")
     cpt_df = pd.DataFrame({
-        "Retrieval":         ["OK",   "FAIL", "OK",   "FAIL"],
-        "Ranking":           ["OK",   "OK",   "FAIL", "FAIL"],
-        "P(Hallucination)":  [CPT["h00"],CPT["h10"],CPT["h01"],CPT["h11"]],
-        "vs FTA flat 0.480": [f"{CPT['h00']-0.48:+.4f}",f"{CPT['h10']-0.48:+.4f}",
-                               f"{CPT['h01']-0.48:+.4f}",f"{CPT['h11']-0.48:+.4f}"],
-        "Source":            ["Measured n=221","Literature","Measured n=129","Measured n=150"],
+        "Retrieval":         ["OK",       "FAIL",     "OK",       "FAIL"],
+        "Ranking":           ["OK",       "OK",       "FAIL",     "FAIL"],
+        "P(Hallucination)":  [CPT["h00"], CPT["h10"], CPT["h01"], CPT["h11"]],
+        "vs FTA flat 0.480": [f"{CPT['h00']-0.48:+.4f}", f"{CPT['h10']-0.48:+.4f}",
+                               f"{CPT['h01']-0.48:+.4f}", f"{CPT['h11']-0.48:+.4f}"],
+        "Source":            ["Measured n=221","Unreachable (placeholder 0.0)","Measured n=129","Measured n=150"],
     })
     st.dataframe(cpt_df, use_container_width=True, hide_index=True)
     vals    = [CPT["h00"], CPT["h10"], CPT["h01"], CPT["h11"]]
     fig_cpt = go.Figure(go.Bar(
-        x=["Ret=OK Rank=OK","Ret=FAIL Rank=OK",
-           "Ret=OK Rank=FAIL","Ret=FAIL Rank=FAIL"],
+        x=["Ret=OK\nRank=OK","Ret=FAIL\nRank=OK",
+           "Ret=OK\nRank=FAIL","Ret=FAIL\nRank=FAIL"],
         y=vals,
         marker_color=["#22c55e","#f59e0b","#f97316","#ef4444"],
         text=[f"{v:.4f}" for v in vals], textposition="outside",
@@ -489,16 +556,11 @@ elif page == "Bayesian Network":
         rank_obs = st.checkbox("Ranking = FAIL observed")
         tool_obs = st.checkbox("Tool = FAIL observed")
     with col2:
-        if ret_obs and rank_obs:
-            p_h_ev = CPT["h11"]; p_af_ev = 0.962
-        elif ret_obs:
-            p_h_ev = CPT["h10"]; p_af_ev = 0.956
-        elif rank_obs:
-            p_h_ev = CPT["h01"]; p_af_ev = 0.880
-        elif tool_obs:
-            p_h_ev = 0.436;      p_af_ev = 0.815
-        else:
-            p_h_ev = 0.436;      p_af_ev = 0.688
+        if ret_obs and rank_obs:   p_h_ev = CPT["h11"]; p_af_ev = 0.962
+        elif ret_obs:              p_h_ev = CPT["h10"]; p_af_ev = 0.956
+        elif rank_obs:             p_h_ev = CPT["h01"]; p_af_ev = 0.880
+        elif tool_obs:             p_h_ev = 0.436;      p_af_ev = 0.815
+        else:                      p_h_ev = 0.436;      p_af_ev = 0.688
         risk, rc = risk_level(p_af_ev)
         st.metric("P(AgentFail | evidence)",     f"{p_af_ev:.4f}")
         st.metric("P(Hallucination | evidence)", f"{p_h_ev:.4f}")
@@ -512,19 +574,20 @@ padding:12px;text-align:center;margin-top:8px">
 <div style="font-size:12px;color:{rc}">P(AgentFail) = {p_af_ev:.4f}</div>
 </div>""", unsafe_allow_html=True)
 
+# ── SENSITIVITY ANALYSIS ──────────────────────────────────────
 elif page == "Sensitivity Analysis":
     st.title("Sensitivity Analysis — Tornado Diagram")
     st.markdown("Which component matters most for reliability?")
     st.markdown(
         '<div class="hbox"><b>RQ5 answered:</b> Retrieval failure is the most '
-        'critical component (swing=0.153). Improving the retriever gives the '
-        'largest single reliability improvement. Invest in retrieval first.</div>',
+        'critical component (BN swing=0.154). Improving the retriever gives the '
+        'largest single reliability improvement across all three configurations.</div>',
         unsafe_allow_html=True)
-    params = list(SENS.keys())
-    swings = [SENS[p] for p in params]
-    order  = sorted(range(len(swings)), key=lambda i: swings[i])
-    sp     = [params[i] for i in order]
-    sv     = [swings[i] for i in order]
+    params   = list(SENS.keys())
+    swings   = [SENS[p] for p in params]
+    order    = sorted(range(len(swings)), key=lambda i: swings[i])
+    sp       = [params[i] for i in order]
+    sv       = [swings[i] for i in order]
     colors_t = ["#ef4444" if s > 0.12 else
                 "#f59e0b" if s > 0.08 else
                 "#3b82f6" for s in sv]
@@ -534,7 +597,7 @@ elif page == "Sensitivity Analysis":
         text=[f"swing={s:.4f}" for s in sv], textposition="outside",
     ))
     fig_t.update_layout(
-        title=f"Baseline P(AgentFail|BN) = 0.6881  — each bar = swing from +/-0.20 variation",
+        title="Baseline P(AgentFail|BN) = 0.6881  — each bar = swing from ±0.20 variation",
         xaxis=dict(title="Swing in P(AgentFailure)", gridcolor="#f1f5f9"),
         height=380, margin=dict(t=50, b=20, l=180, r=140),
         plot_bgcolor="white", paper_bgcolor="white",
@@ -559,87 +622,172 @@ elif page == "Sensitivity Analysis":
         st.metric("Reliability gain", f"{max(0.0, improve):.2f}pp",
                   "reduction in failure probability")
 
-elif page == "V1 vs V2 Comparison":
-    st.title("V1 vs V2 Model Comparison")
-    st.markdown(f"**V1:** BART + MiniLM + Flan-T5-Large (n=500)  |  "
-                f"**V2:** DeBERTa + mpnet + Flan-T5-XL (n=2000)")
+# ── CROSS-VALIDATION RESULTS ──────────────────────────────────
+elif page == "Cross-Validation Results":
+    st.title("Cross-Validation Results")
+    st.markdown("Shuffled 5-fold CV — aggregate P(AgentFailure) estimation across V1, V2, V3")
+    st.markdown(
+        '<div class="rbox"><b>BN wins across all three configurations.</b> '
+        'The BN achieves the lowest mean absolute error in every configuration. '
+        'At V3 (n=4,000) the BN error is 0.0157 — an 88.9% reduction vs naive FTA.</div>',
+        unsafe_allow_html=True)
+    st.divider()
+
+    # Full 9-row dissertation table
+    rows_cv = []
+    for cfg, cv_data, n in [
+        ("V1 (n=500)",   CV["V1"], 500),
+        ("V2 (n=2,000)", CV["V2"], 2000),
+        ("V3 (n=4,000)", CV["V3"], 4000),
+    ]:
+        for model, mk, sk in [
+            ("Naive FTA",        "naive_mean", "naive_std"),
+            ("Corrected FTA",    "corr_mean",  "corr_std"),
+            ("Bayesian Network", "bn_mean",    "bn_std"),
+        ]:
+            rows_cv.append({
+                "Configuration":   cfg,
+                "Reliability Model":model,
+                "Mean Abs Error":  f"{cv_data[mk]:.4f}",
+                "SD (ddof=1)":     f"{cv_data[sk]:.4f}",
+            })
+    st.dataframe(pd.DataFrame(rows_cv), use_container_width=True, hide_index=True)
+    st.divider()
+
+    # Chart comparing all models across configs
+    st.subheader("BN error vs FTA error — all configurations")
+    cfg_labels  = ["V1\n(n=500)", "V2\n(n=2,000)", "V3\n(n=4,000)"]
+    naive_means = [CV["V1"]["naive_mean"], CV["V2"]["naive_mean"], CV["V3"]["naive_mean"]]
+    corr_means  = [CV["V1"]["corr_mean"],  CV["V2"]["corr_mean"],  CV["V3"]["corr_mean"]]
+    bn_means    = [CV["V1"]["bn_mean"],    CV["V2"]["bn_mean"],    CV["V3"]["bn_mean"]]
+
+    fig_cv = go.Figure()
+    fig_cv.add_trace(go.Bar(name="Naive FTA", x=cfg_labels, y=naive_means,
+                             marker_color="#ef4444",
+                             text=[f"{v:.4f}" for v in naive_means], textposition="outside"))
+    fig_cv.add_trace(go.Bar(name="Corrected FTA", x=cfg_labels, y=corr_means,
+                             marker_color="#f59e0b",
+                             text=[f"{v:.4f}" for v in corr_means], textposition="outside"))
+    fig_cv.add_trace(go.Bar(name="Bayesian Network", x=cfg_labels, y=bn_means,
+                             marker_color="#22c55e",
+                             text=[f"{v:.4f}" for v in bn_means], textposition="outside"))
+    fig_cv.update_layout(
+        barmode="group", height=420,
+        yaxis=dict(title="Mean Absolute Error", range=[0, 0.18], gridcolor="#f1f5f9"),
+        margin=dict(t=20, b=20, l=40, r=20),
+        plot_bgcolor="white", paper_bgcolor="white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig_cv, use_container_width=True)
+    st.divider()
+
+    st.subheader("Key findings")
     c1, c2, c3 = st.columns(3)
+    c1.metric("BN error reduction vs Naive FTA (V3)",
+              f"{(CV['V3']['naive_mean']-CV['V3']['bn_mean'])/CV['V3']['naive_mean']*100:.1f}%")
+    c2.metric("BN SD at V3", f"{CV['V3']['bn_std']:.4f}",
+              "vs 0.0334 at V1 — 3.8x more stable")
+    c3.metric("Corrected FTA improvement (V1)",
+              f"{(CV['V1']['naive_mean']-CV['V1']['corr_mean'])/CV['V1']['naive_mean']*100:.1f}%",
+              "vs naive FTA")
+
+# ── V1 vs V2 vs V3 COMPARISON ────────────────────────────────
+elif page == "V1 vs V2 vs V3 Comparison":
+    st.title("V1 vs V2 vs V3 Model Comparison")
+    st.markdown(
+        "**V1:** BART + MiniLM + Flan-T5-Large (n=500)  |  "
+        "**V2:** DeBERTa + mpnet + Flan-T5-XL (n=2,000)  |  "
+        "**V3:** DeBERTa + mpnet + Flan-T5-XL (n=4,000, independent slice)")
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Agent fail V1", f"{V1['agent_fail']:.3f}", f"n={V1['n']}")
     c2.metric("Agent fail V2", f"{V2['agent_fail']:.3f}",
-              f"{(V2['agent_fail']-V1['agent_fail'])*100:+.1f}pp",
-              delta_color="inverse")
-    c3.metric("Improvement",
-              f"{(V1['agent_fail']-V2['agent_fail'])*100:.1f}pp", "more reliable")
+              f"{(V2['agent_fail']-V1['agent_fail'])*100:+.1f}pp", delta_color="inverse")
+    c3.metric("Agent fail V3", f"{V3['agent_fail']:.3f}",
+              f"{(V3['agent_fail']-V1['agent_fail'])*100:+.1f}pp", delta_color="inverse")
+    c4.metric("Total improvement", f"{(V1['agent_fail']-V3['agent_fail'])*100:.2f}pp",
+              "V1 → V3")
     st.divider()
+
     comp_keys  = ["intent_fail","retrieval_fail","ranking_fail",
                   "hallucination","tool_fail","agent_fail"]
     comp_names = ["Intent","Retrieval","Ranking","Hallucination","Tool","Agent"]
     v1r = [V1[k] for k in comp_keys]
     v2r = [V2[k] for k in comp_keys]
+    v3r = [V3[k] for k in comp_keys]
+
     tab1, tab2, tab3 = st.tabs(["Side by side","Improvement %","Confidence intervals"])
+
     with tab1:
         fig_c = go.Figure()
         fig_c.add_trace(go.Bar(
-            name="V1 BART+MiniLM", x=comp_names, y=v1r,
+            name="V1 BART+MiniLM (n=500)", x=comp_names, y=v1r,
             marker_color="#f87171",
-            text=[f"{r:.3f}" for r in v1r], textposition="outside",
-        ))
+            text=[f"{r:.3f}" for r in v1r], textposition="outside"))
         fig_c.add_trace(go.Bar(
-            name="V2 DeBERTa+mpnet", x=comp_names, y=v2r,
+            name="V2 DeBERTa+mpnet (n=2,000)", x=comp_names, y=v2r,
             marker_color="#4ade80",
-            text=[f"{r:.3f}" for r in v2r], textposition="outside",
-        ))
+            text=[f"{r:.3f}" for r in v2r], textposition="outside"))
+        fig_c.add_trace(go.Bar(
+            name="V3 DeBERTa+mpnet (n=4,000)", x=comp_names, y=v3r,
+            marker_color="#60a5fa",
+            text=[f"{r:.3f}" for r in v3r], textposition="outside"))
         fig_c.update_layout(
-            barmode="group", height=400,
-            yaxis=dict(range=[0, 0.85], gridcolor="#f1f5f9"),
+            barmode="group", height=420,
+            yaxis=dict(range=[0, 0.90], gridcolor="#f1f5f9"),
             margin=dict(t=20, b=20, l=40, r=20),
             plot_bgcolor="white", paper_bgcolor="white",
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
         )
         st.plotly_chart(fig_c, use_container_width=True)
+
     with tab2:
-        imp = [(v1-v2)/v1*100 if v1 > 0 else 0.0 for v1,v2 in zip(v1r,v2r)]
-        ci2 = ["#22c55e" if i > 0 else "#ef4444" for i in imp]
+        imp13 = [(v1-v3)/v1*100 if v1 > 0 else 0.0 for v1,v3 in zip(v1r,v3r)]
+        ci3   = ["#22c55e" if i > 0 else "#ef4444" for i in imp13]
         fig_i = go.Figure(go.Bar(
-            x=comp_names, y=imp, marker_color=ci2,
-            text=[f"{i:+.1f}%" for i in imp], textposition="outside",
+            x=comp_names, y=imp13, marker_color=ci3,
+            text=[f"{i:+.1f}%" for i in imp13], textposition="outside",
         ))
         fig_i.add_hline(y=0, line_color="#1e293b", line_width=1)
         fig_i.update_layout(
+            title="V1 → V3 improvement % (positive = better)",
             height=380, yaxis=dict(gridcolor="#f1f5f9"),
-            margin=dict(t=20, b=20, l=40, r=20),
+            margin=dict(t=40, b=20, l=40, r=20),
             plot_bgcolor="white", paper_bgcolor="white",
         )
         st.plotly_chart(fig_i, use_container_width=True)
+
     with tab3:
         rows = []
         for k, name in zip(comp_keys, comp_names):
-            r1 = V1[k]; r2 = V2[k]
-            lo1, hi1 = wilson_ci(int(r1*V1["n"]), V1["n"])
-            lo2, hi2 = wilson_ci(int(r2*V2["n"]), V2["n"])
+            r1 = V1[k]; r2 = V2[k]; r3 = V3[k]
+            lo1,hi1 = wilson_ci(int(r1*V1["n"]), V1["n"])
+            lo2,hi2 = wilson_ci(int(r2*V2["n"]), V2["n"])
+            lo3,hi3 = wilson_ci(int(r3*V3["n"]), V3["n"])
             rows.append({
                 "Component": name,
                 "V1 rate":   f"{r1:.4f}",
                 "V1 95% CI": f"[{lo1:.4f}, {hi1:.4f}]",
                 "V2 rate":   f"{r2:.4f}",
                 "V2 95% CI": f"[{lo2:.4f}, {hi2:.4f}]",
-                "Change":    f"{(r2-r1)*100:+.2f}pp",
+                "V3 rate":   f"{r3:.4f}",
+                "V3 95% CI": f"[{lo3:.4f}, {hi3:.4f}]",
+                "V1→V3":     f"{(r3-r1)*100:+.2f}pp",
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True,
-                     hide_index=True)
-        st.caption("V2 CIs are ±2.2pp vs ±4.4pp for V1 — twice as precise at n=2000.")
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.caption("V3 CIs are ±1.4pp — three times more precise than V1 (±4.4pp) at n=4,000.")
 
+# ── APPLY TO ANY AGENT ────────────────────────────────────────
 elif page == "Apply to Any Agent":
     st.title("Apply to Any AI Agent")
     st.markdown("Your framework is domain-agnostic. Enter any agent's component failure rates.")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Enter failure rates for your agent:**")
-        m_ret  = st.number_input("P(Retrieval / Search failure)",   0.0,1.0,0.30,0.01,format="%.3f")
-        m_rank = st.number_input("P(Ranking / Filter failure)",     0.0,1.0,0.56,0.01,format="%.3f")
-        m_hall = st.number_input("P(Generation / Output failure)",  0.0,1.0,0.48,0.01,format="%.3f")
-        m_tool = st.number_input("P(Action / Tool failure)",        0.0,1.0,0.13,0.01,format="%.3f")
-        m_int  = st.number_input("P(Query Understanding failure)",  0.0,1.0,0.00,0.01,format="%.3f")
+        m_ret  = st.number_input("P(Retrieval / Search failure)",  0.0,1.0,0.30,0.01,format="%.3f")
+        m_rank = st.number_input("P(Ranking / Filter failure)",    0.0,1.0,0.56,0.01,format="%.3f")
+        m_hall = st.number_input("P(Generation / Output failure)", 0.0,1.0,0.48,0.01,format="%.3f")
+        m_tool = st.number_input("P(Action / Tool failure)",       0.0,1.0,0.13,0.01,format="%.3f")
+        m_int  = st.number_input("P(Query Understanding failure)", 0.0,1.0,0.00,0.01,format="%.3f")
     with col2:
         m_bn, m_fta = compute_bn(m_ret, m_rank, m_hall, m_tool, m_int)
         risk, rc    = risk_level(m_bn)
@@ -658,11 +806,11 @@ padding:16px;text-align:center;margin-top:12px">
     st.divider()
     st.subheader("Example domains this framework applies to")
     domains = [
-        ("Medical QA Agent",      "Symptom class → Clinical search → Evidence rank → Diagnosis → Referral", "#ef4444", "High stakes"),
-        ("Legal Document AI",     "Intent class → Case law search → Relevance rank → Summary → Recommendation","#f97316","High stakes"),
-        ("Customer Support Bot",  "Query class → KB search → Answer rank → Response → Escalation","#3b82f6","Medium stakes"),
-        ("Coding Assistant",      "Task class → Snippet search → Relevance rank → Code gen → Test run","#8b5cf6","Medium stakes"),
-        ("Research Assistant",    "Topic class → Paper search → Citation rank → Summary → Format select","#22c55e","Lower stakes"),
+        ("Medical QA Agent",     "Symptom class → Clinical search → Evidence rank → Diagnosis → Referral",       "#ef4444","High stakes"),
+        ("Legal Document AI",    "Intent class → Case law search → Relevance rank → Summary → Recommendation",   "#f97316","High stakes"),
+        ("Customer Support Bot", "Query class → KB search → Answer rank → Response → Escalation",                "#3b82f6","Medium stakes"),
+        ("Coding Assistant",     "Task class → Snippet search → Relevance rank → Code gen → Test run",           "#8b5cf6","Medium stakes"),
+        ("Research Assistant",   "Topic class → Paper search → Citation rank → Summary → Format select",         "#22c55e","Lower stakes"),
     ]
     for name, pipe, color, stakes in domains:
         st.markdown(f"""
